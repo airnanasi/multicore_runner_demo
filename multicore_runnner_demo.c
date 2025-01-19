@@ -6,21 +6,24 @@
 
 #define SHARED_DATA_SIZE 16
 
-// 共有メモリ（配列）
+// Variable for LED toggle
+volatile bool led_state = false;
+
+// Shared memory (array)
 volatile int shared_data[SHARED_DATA_SIZE];
 
-// セマフォ
+// Semaphore
 semaphore_t sem;
 
-// キュー（Core1 → Core0 の通知用）
+// Queue (for notifications from Core1 to Core0)
 queue_t core1_to_core0_queue;
 
-// Core1の処理（送信側）
+// Core1 process (Sender side)
 void core1_main() {
     int data_to_send = 0;
 
     while (true) {
-        // セマフォを取得して共有メモリにデータを書き込む
+        // Acquire semaphore and write data to shared memory
         sem_acquire_blocking(&sem);
 
         printf("Core 1: Writing data to shared memory...\n");
@@ -29,16 +32,16 @@ void core1_main() {
         }
         data_to_send += SHARED_DATA_SIZE;
 
-        // セマフォを解放
+        // Release semaphore
         sem_release(&sem);
 
-        // Core0に通知を送る
-        uint32_t notification = 1; // 任意の値（ここでは1）
+        // Send notification to Core0
+        uint32_t notification = 1; // Arbitrary value (1 in this case)
         queue_add_blocking(&core1_to_core0_queue, &notification);
 
         printf("Core 1: Data written and notification sent to Core 0.\n");
 
-        // 少し待機
+        // Short delay
         sleep_ms(2000);
     }
 }
@@ -47,21 +50,30 @@ int main() {
     stdio_init_all();
     printf("Starting Core 1...\n");
 
-    // セマフォの初期化（初期値1、最大値1のバイナリセマフォ）
+    // GPIO 25 is the on-board LED
+    bool led_state = false;
+    const uint LED_PIN = 25;    // GPIO 25 is the on-board LED
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
+
+    // Initialize semaphore (binary semaphore with initial value 1, maximum value 1)
     sem_init(&sem, 1, 1);
 
-    // キューの初期化（Core1からCore0への通知用）
+    // Initialize queue (for notifications from Core1 to Core0)
     queue_init(&core1_to_core0_queue, sizeof(uint32_t), 1);
 
-    // Core1を起動
+    // Launch Core1
     multicore_launch_core1(core1_main);
 
     while (true) {
-        // Core1からの通知を待機
+        // Wait for notification from Core1
         uint32_t notification;
         queue_remove_blocking(&core1_to_core0_queue, &notification);
 
-        // セマフォを取得して共有メモリからデータを読み取る
+        gpio_put(LED_PIN, led_state);
+        led_state = !led_state;
+
+        // Acquire semaphore and read data from shared memory
         sem_acquire_blocking(&sem);
 
         printf("Core 0: Reading data from shared memory...\n");
@@ -69,10 +81,10 @@ int main() {
             printf("Core 0: shared_data[%d] = %d\n", i, shared_data[i]);
         }
 
-        // セマフォを解放
+        // Release semaphore
         sem_release(&sem);
 
-        // 少し待機
+        // Short delay
         sleep_ms(10);
     }
 
